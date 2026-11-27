@@ -1,0 +1,296 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Li-Fi Transmitter</title>
+
+<style>
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: Arial, sans-serif;
+  background: #101827;
+  color: white;
+  text-align: center;
+  padding: 20px;
+}
+
+.container {
+  max-width: 480px;
+  margin: auto;
+  background: #1b2638;
+  padding: 24px;
+  border-radius: 22px;
+  box-shadow: 0 10px 30px #0005;
+}
+
+h1 {
+  color: #55d6ff;
+}
+
+textarea {
+  width: 100%;
+  height: 110px;
+  padding: 14px;
+  font-size: 17px;
+  border-radius: 12px;
+  border: none;
+  outline: none;
+  resize: vertical;
+}
+
+button {
+  width: 100%;
+  padding: 15px;
+  margin-top: 12px;
+  border: none;
+  border-radius: 12px;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+}
+
+#connect {
+  background: #4285f4;
+  color: white;
+}
+
+#send {
+  background: #19c37d;
+  color: #071b12;
+}
+
+#stop {
+  background: #ff5252;
+  color: white;
+}
+
+#binary {
+  background: #080d15;
+  color: #65ff9b;
+  padding: 14px;
+  margin-top: 15px;
+  border-radius: 10px;
+  min-height: 60px;
+  word-break: break-word;
+  font-family: monospace;
+}
+
+#status {
+  margin-top: 16px;
+  color: #ffd166;
+}
+
+#torch {
+  width: 100px;
+  height: 100px;
+  background: #28384d;
+  border-radius: 50%;
+  margin: 20px auto;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 40px;
+  transition: 0.15s;
+}
+
+#torch.on {
+  background: #fff2a8;
+  color: #111;
+  box-shadow: 0 0 35px #ffe66d;
+}
+</style>
+</head>
+
+<body>
+
+<div class="container">
+
+  <h1>Li-Fi Transmitter</h1>
+  <p>Text → Binary → Flashlight</p>
+
+  <textarea id="message"
+    placeholder="Type your message here..."></textarea>
+
+  <button id="connect" onclick="connectFlash()">
+    CONNECT FLASHLIGHT
+  </button>
+
+  <div id="torch">☀</div>
+
+  <div id="binary">Binary will appear here</div>
+
+  <p id="status">Not connected</p>
+
+  <button id="send" onclick="sendMessage()">
+    SEND MESSAGE
+  </button>
+
+  <button id="stop" onclick="stopSending()">
+    STOP
+  </button>
+
+</div>
+
+<script>
+let track = null;
+let sending = false;
+let torchOn = false;
+
+const torchIcon = document.getElementById("torch");
+const statusText = document.getElementById("status");
+const binaryBox = document.getElementById("binary");
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function setStatus(text) {
+  statusText.textContent = text;
+}
+
+function showTorch(on) {
+  torchOn = on;
+
+  torchIcon.classList.toggle("on", on);
+  torchIcon.textContent = on ? "☀" : "◯";
+}
+
+async function setFlash(on) {
+  if (!track) return;
+
+  try {
+    await track.applyConstraints({
+      advanced: [{ torch: on }]
+    });
+
+    showTorch(on);
+  } catch (error) {
+    setStatus("Flash control failed: " + error.message);
+    throw error;
+  }
+}
+
+async function connectFlash() {
+  try {
+    setStatus("Requesting camera permission...");
+
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: {
+        facingMode: { ideal: "environment" }
+      }
+    });
+
+    track = stream.getVideoTracks()[0];
+
+    setStatus("Camera connected. Flash support depends on phone.");
+
+    await setFlash(false);
+
+  } catch (error) {
+    setStatus("Camera permission failed: " + error.message);
+  }
+}
+
+function convertToBinary(text) {
+  return Array.from(text)
+    .map(character => {
+      const code = character.codePointAt(0);
+
+      return code.toString(2).padStart(8, "0");
+    })
+    .join(" ");
+}
+
+async function sendMessage() {
+  if (!track) {
+    setStatus("Connect flashlight first!");
+    return;
+  }
+
+  if (sending) return;
+
+  const text = document.getElementById("message").value;
+
+  if (!text) {
+    setStatus("Type a message first!");
+    return;
+  }
+
+  sending = true;
+
+  const binary = convertToBinary(text);
+  binaryBox.textContent = binary;
+
+  setStatus("Sending message...");
+  
+  try {
+    for (const character of text) {
+      if (!sending) break;
+
+      const bits = character
+        .codePointAt(0)
+        .toString(2)
+        .padStart(8, "0");
+
+      // Character start pulse
+      await setFlash(true);
+      await sleep(1000);
+
+      // Separator
+      await setFlash(false);
+      await sleep(300);
+
+      // Send 8 binary bits
+      for (const bit of bits) {
+        if (!sending) break;
+
+        if (bit === "1") {
+          await setFlash(true);
+        } else {
+          await setFlash(false);
+        }
+
+        await sleep(500);
+      }
+
+      // Character gap
+      await setFlash(false);
+      await sleep(700);
+    }
+
+    if (sending) {
+      setStatus("Transmission complete!");
+    }
+
+  } catch (error) {
+    setStatus("Transmission stopped: " + error.message);
+  }
+
+  sending = false;
+
+  await setFlash(false);
+}
+
+async function stopSending() {
+  sending = false;
+
+  if (track) {
+    try {
+      await setFlash(false);
+    } catch (e) {
+      showTorch(false);
+    }
+  }
+
+  setStatus("Transmission stopped.");
+}
+</script>
+
+</body>
+</html>
